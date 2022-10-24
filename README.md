@@ -3,4 +3,4 @@
 ## Topics
 
 ### Animations
-- [How to wait for an animation to finish?](./Assets/Topics/Animation/Wait For Animation/Readme.md)
+- [How to wait for an animation to finish?](./Assets/Topics/Animation/Wait_For_Animation/Readme.md)
