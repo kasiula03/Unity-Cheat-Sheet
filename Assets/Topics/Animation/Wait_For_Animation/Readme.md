@@ -1,0 +1,1 @@
+How to wait for an animation to finish?
