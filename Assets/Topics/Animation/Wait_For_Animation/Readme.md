@@ -1,3 +1,3 @@
 # How to wait for an animation to finish?
 
-### Check for [Wait For Animation](./Assets/Topics/Animation/Wait_For_Animation/Solution/WaitForAnimation.cs) component and [Usage](./Assets/Topics/Animation/Wait_For_Animation/Usage/CharacterController.cs)
+### Check for [Wait For Animation](./Solution/WaitForAnimation.cs) component and [Usage](./Usage/CharacterController.cs)
