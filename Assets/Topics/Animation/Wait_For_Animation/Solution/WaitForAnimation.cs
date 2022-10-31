@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEditor.Animations;
 using UnityEngine;
 
 public class WaitForAnimation : MonoBehaviour
@@ -11,8 +12,24 @@ public class WaitForAnimation : MonoBehaviour
 
     private bool _framePassed;
 
+    public static async Task<bool> TriggerAndWaitForCompletion(Animator animator, CancellationToken cancellationToken,
+        string triggerParameter, Action onTransitionComplete = null, Action onAnimationComplete = null)
+    {
+        animator.SetTrigger(triggerParameter);
+        return await WaitForComplete(animator, cancellationToken, onTransitionComplete, onAnimationComplete,
+            triggerParameter);
+    }
+
+    public static async Task<bool> TriggerAndWaitForTransition(Animator animator, CancellationToken cancellationToken,
+        string triggerParameter, Action onTransitionComplete = null)
+    {
+        animator.SetTrigger(triggerParameter);
+        await WaitForTransitionComplete(animator, cancellationToken, onTransitionComplete, triggerParameter);
+        return !cancellationToken.IsCancellationRequested;
+    }
+
     public static async Task<bool> WaitForComplete(Animator animator, CancellationToken cancellationToken,
-        Action onTransitionComplete, Action onAnimationComplete)
+        Action onTransitionComplete, Action onAnimationComplete, string parameter)
     {
         GameObject gameObject = new GameObject
         {
@@ -22,10 +39,11 @@ public class WaitForAnimation : MonoBehaviour
         WaitForAnimation animation = gameObject.AddComponent<WaitForAnimation>();
 
         animation.Initialize(animator, onTransitionComplete, onAnimationComplete);
-        
+
         //Wait for transition to begin
         await animation.NextFrame();
-        await animation.WaitForTransition(cancellationToken);
+
+        await animation.WaitForTransition(cancellationToken, parameter);
         if (!cancellationToken.IsCancellationRequested)
         {
             bool result = await animation.WaitForCompleteAnimation(cancellationToken);
@@ -39,8 +57,9 @@ public class WaitForAnimation : MonoBehaviour
         }
     }
 
+
     public static async Task WaitForTransitionComplete(Animator animator, CancellationToken cancellationToken,
-        Action onTransitionComplete)
+        Action onTransitionComplete, string parameter)
     {
         GameObject gameObject = new GameObject
         {
@@ -52,7 +71,7 @@ public class WaitForAnimation : MonoBehaviour
 
         //Wait for transition to begin
         await animation.NextFrame();
-        await animation.WaitForTransition(cancellationToken);
+        await animation.WaitForTransition(cancellationToken, parameter);
         DestroyImmediate(gameObject);
     }
 
@@ -76,37 +95,132 @@ public class WaitForAnimation : MonoBehaviour
         _framePassed = true;
     }
 
-    private async Task<bool> WaitForTransition(CancellationToken cancellationToken)
+    private async Task<bool> WaitForTransition(CancellationToken cancellationToken, string parameter)
     {
-        AnimatorTransitionInfo transitionInfo = _animator.GetAnimatorTransitionInfo(0);
-        float duration = transitionInfo.duration;
-        float durationLeft = (1 - transitionInfo.normalizedTime) * duration;
-        try
+        if (!_animator.IsInTransition(0))
         {
-            await Task.Delay(TimeSpan.FromSeconds(durationLeft), cancellationToken);
+            AnimationClip currentClip = _animator.GetCurrentAnimatorClipInfo(0)[0].clip;
+            AnimatorState currentClipState =
+                _animator.GetAnimatorStateForClip(currentClip);
+
+            AnimatorStateTransition transition = FindTransition(currentClipState, parameter);
+
+            if (transition == null)
+            {
+                transition =
+                    FindAnyStateTransition(_animator.runtimeAnimatorController as AnimatorController, parameter);
+            }
+
+            if (transition != null && transition.hasExitTime)
+            {
+                AnimatorStateInfo animationState = _animator.GetCurrentAnimatorStateInfo(0);
+
+                float remainingExitTime = CalculateRemainingTime(animationState, transition);
+                Debug.Log("Wait for Exit Time");
+                try
+                {
+                    //TODO: Is fixed duration
+                    await Task.Delay(TimeSpan.FromSeconds(remainingExitTime * animationState.length),
+                        cancellationToken);
+                    Debug.Log("Exit time finished");
+                }
+                catch (TaskCanceledException _)
+                {
+                    return false;
+                }
+            }
         }
-        catch (TaskCanceledException _)
+
+        AnimatorTransitionInfo transitionInfo = _animator.GetAnimatorTransitionInfo(0);
+
+        if (transitionInfo.normalizedTime < 1)
         {
-            return false;
+            float duration = transitionInfo.duration;
+            float durationLeft = (1 - transitionInfo.normalizedTime) * duration;
+            try
+            {
+                Debug.Log("Wait for transition");
+                await Task.Delay(TimeSpan.FromSeconds(durationLeft), cancellationToken);
+                Debug.Log("Transition finished");
+            }
+            catch (TaskCanceledException _)
+            {
+                return false;
+            }
         }
 
         _onTransitionComplete?.Invoke();
         return true;
     }
 
+    private static float CalculateRemainingTime(AnimatorStateInfo animationState, AnimatorStateTransition transition)
+    {
+        float currentTime = animationState.normalizedTime;
+
+        float currentStep = currentTime - Mathf.FloorToInt(currentTime);
+        float differentToTransition = 0;
+        if (currentStep > transition.exitTime)
+        {
+            differentToTransition = (1 - currentStep) + transition.exitTime;
+        }
+        else
+        {
+            differentToTransition = transition.exitTime - currentStep;
+        }
+        return differentToTransition;
+    }
+
+    private AnimatorStateTransition FindAnyStateTransition(AnimatorController animatorController, string parameter)
+    {
+        AnimatorStateMachine stateMachine = animatorController.layers[0].stateMachine;
+        foreach (AnimatorStateTransition transition in stateMachine.anyStateTransitions)
+        {
+            foreach (AnimatorCondition animatorCondition in transition.conditions)
+            {
+                if (animatorCondition.parameter == parameter)
+                {
+                    return transition;
+                }
+            }
+        }
+        return null;
+    }
+
+    private AnimatorStateTransition FindTransition(AnimatorState currentClipState, string parameter)
+    {
+        foreach (AnimatorStateTransition transition in currentClipState.transitions)
+        {
+            foreach (AnimatorCondition animatorCondition in transition.conditions)
+            {
+                if (animatorCondition.parameter == parameter)
+                {
+                    return transition;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private async Task<bool> WaitForCompleteAnimation(CancellationToken cancellationToken)
     {
+        string name = _animator.GetCurrentAnimatorClipInfo(0)[0].clip.name;
         AnimatorStateInfo state = _animator.GetCurrentAnimatorStateInfo(0);
         float currentProgress = state.normalizedTime;
         float animationLength = state.length;
-        float timeLeft = (1 - currentProgress) * animationLength;
-        try
+        if (currentProgress < 1)
         {
-            await Task.Delay(TimeSpan.FromSeconds(timeLeft), cancellationToken);
-        }
-        catch (TaskCanceledException _)
-        {
-            return false;
+            float timeLeft = (1 - currentProgress) * animationLength;
+            try
+            {
+                Debug.Log($"Wait for animation {name}");
+                await Task.Delay(TimeSpan.FromSeconds(timeLeft), cancellationToken);
+                Debug.Log($"Animation finished {name}");
+            }
+            catch (TaskCanceledException _)
+            {
+                return false;
+            }
         }
         _onAnimationComplete?.Invoke();
         return true;

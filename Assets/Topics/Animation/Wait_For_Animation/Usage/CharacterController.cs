@@ -1,14 +1,19 @@
 using System;
+using System.Threading.Tasks;
+using UnityEditor.Animations;
 using UnityEngine;
 
 public class CharacterController : MonoBehaviour
 {
     [SerializeField] private Animator _animator;
 
-    private static readonly int Walking = Animator.StringToHash("Walking");
-    private static readonly int Standing = Animator.StringToHash("Standing");
+    private static readonly string Walking = "Walking";
+    private static readonly string WalkingBlendTree = "WalkingBlendTree";
+    private static readonly string Standing = "Standing";
 
     private readonly CancellationTokenProvider _cancellationTokenProvider = new CancellationTokenProvider();
+
+    private string _currentWalking = Walking;
 
     private void Start()
     {
@@ -19,11 +24,15 @@ public class CharacterController : MonoBehaviour
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
+            if (_currentWalking == Walking)
+            {
+                _currentWalking = WalkingBlendTree;
+            }
+            else
+            {
+                _currentWalking = Walking;
+            }
             StandAndWalk();
-        }
-        if (Input.GetKeyDown(KeyCode.Return))
-        {
-            Walk();
         }
     }
 
@@ -35,16 +44,32 @@ public class CharacterController : MonoBehaviour
     private async void StandAndWalk()
     {
         _cancellationTokenProvider.Cancel();
-        _animator.SetTrigger(Standing);
-        bool completed = await WaitForAnimation.WaitForComplete(_animator,
-            _cancellationTokenProvider.GetCancellationToken(), null,
-            null);
-        Debug.Log("Finish Standing!");
+
+        bool completed = await WaitForAnimation.TriggerAndWaitForCompletion(_animator,
+            _cancellationTokenProvider.GetCancellationToken(), Standing);
         if (completed)
         {
-            _animator.SetTrigger(Walking);
+            Debug.Log("Finish Standing!");
+        }
+        else
+        {
+            Debug.Log("Stand interrupted");
+        }
+
+        if (completed)
+        {
+            string walkingParameter = _currentWalking;
+            bool result = await WaitForAnimation.TriggerAndWaitForTransition(_animator,
+                _cancellationTokenProvider.GetCancellationToken(), walkingParameter);
+            if (!result)
+            {
+                Debug.Log(walkingParameter);
+                _animator.ResetTrigger(walkingParameter);
+            }
+            Debug.Log("Start Walking");
         }
     }
+
 
     private void Walk()
     {
