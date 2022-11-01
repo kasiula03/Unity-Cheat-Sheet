@@ -1,6 +1,3 @@
-using System;
-using System.Threading.Tasks;
-using UnityEditor.Animations;
 using UnityEngine;
 
 public class CharacterController : MonoBehaviour
